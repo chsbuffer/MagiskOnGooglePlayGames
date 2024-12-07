@@ -1,409 +1,131 @@
-﻿using System.Collections.Immutable;
-using System.Diagnostics;
-using System.IO.Compression;
-using System.Security.Cryptography;
-using System.Security.Principal;
-using System.Xml;
+﻿using System.CommandLine;
+using System.CommandLine.Builder;
+using System.CommandLine.Help;
+using System.CommandLine.Parsing;
+using hpesuperpower;
 
-using Mono.Cecil;
-using Mono.Cecil.Cil;
-
-using static DiskPartitionInfo.DiskPartitionInfo;
-using static Helper;
-
-namespace hpesuperpower;
-
-class Program
-{
-    const string StablePath = @"C:\Program Files\Google\Play Games\current";
-    const string DevPath = @"C:\Program Files\Google\Play Games Developer Emulator\current";
-
-    class Args
-    {
-        public bool Dev;
-        public string Magisk = null!;
-        public bool Restore;
-
-        public bool Parse(string[] args)
-        {
-            for (int i = 0; i < args.Length; i++)
-            {
-                switch (args[i].ToLowerInvariant())
-                {
-                    case "-magisk":
-                        if (i == args.Length - 1)
-                        {
-                            Console.WriteLine("<magisk_app> not specified");
-                            break;
-                        }
-                        Magisk = Path.GetFullPath(args[++i]);
-                        break;
-                    case "-dev":
-                        Dev = true;
-                        break;
-                    case "-restore":
-                        Restore = true;
-                        break;
-                }
-            }
-
-            bool result = true;
-            if (!Restore)
-            {
-                if (Magisk == null)
-                    result = false;
-                else if (!File.Exists(Magisk))
-                {
-                    Console.WriteLine($"{Magisk} doesn't exist.");
-                    result = false;
-                }
-            }
-
-
-            if (!result)
-            {
-                Console.WriteLine(
-"""
-Google Play Games Super Power. 
+var prog = "hpesuperpower.exe";
+var head = @"HPE Superpower tool.
+Google Play Games Emulator modding tool.
 Author: ChsBuffer
+".Trim();
 
-Root Google Play Games Emulator: 
--magisk <magisk app> [-dev]
-  -dev: Patch Play Games Developer Emulator
-  <magisk_app>: path to Magisk app file
-
-
-Restore all changes from backup:
--restore [-dev]
--dev: Restore on Play Games Developer Emulator
-
-""");
-            }
-            return result;
-        }
-    }
-
-    static string StartDirectory = null!;
-
-    static void Main(string[] args)
-    {
-        StartDirectory = Environment.CurrentDirectory;
-
-        bool isElevated;
-        using (WindowsIdentity identity = WindowsIdentity.GetCurrent())
-        {
-            WindowsPrincipal principal = new WindowsPrincipal(identity);
-            isElevated = principal.IsInRole(WindowsBuiltInRole.Administrator);
-        }
-
-        if (!isElevated)
-        {
-            Console.WriteLine("Please run this program from Elevated Command Prompt");
-            return;
-        }
-
-        var arg = new Args();
-        if (!arg.Parse(args))
-        {
-            return;
-        }
-
-        var installPath = arg.Dev ? DevPath : StablePath;
-
-        if (!Directory.Exists(installPath))
-        {
-            Console.WriteLine("Google Play Games have not installed. Get it at https://play.google.com/googleplaygames or https://developer.android.com/games/playgames/emulator");
-            return;
-        }
-
-        string aggregateImg = Path.Combine(installPath, @"emulator\avd\aggregate.img");
-        string bios = Path.Combine(installPath, @"emulator\avd\bios.rom");
-        string serviceExe = Path.Combine(installPath, @"service\Service.exe");
-        string serviceConfig = Path.Combine(installPath, @"service\Service.exe.config");
-
-        string stockBios = Path.Combine(installPath, @"emulator\avd\bios.rom.bak");
-        string stockBootImg = Path.Combine(installPath, @"emulator\avd\boot_a.img");
-        string stockServiceExe = Path.Combine(installPath, @"service\Service.exe.bak");
-        string stockServiceConfig = Path.Combine(installPath, @"service\Service.exe.config.bak");
-
-        if (arg.Restore)
-        {
-            if (!File.Exists(stockBios))
-            {
-                Console.WriteLine("No backup founded.");
-                return;
-            }
-
-            Console.WriteLine("\n\n############# Restore bios.rom");
-            File.Copy(stockBios, bios, true);
-            Console.WriteLine("\n\n############# Restore Service.exe");
-            File.Copy(stockServiceExe, serviceExe, true);
-            Console.WriteLine("\n\n############# Restore Service.exe.config");
-            File.Copy(stockServiceConfig, serviceConfig, true);
-            Console.WriteLine("\n\n############# Restore stock boot");
-            FlashBoot(aggregateImg, stockBootImg);
-            return;
-        }
-
-        if (Process.GetProcesses().Any(p => p.GetFileNameOrDefault() == serviceExe))
-        {
-            Console.WriteLine($"Please quit Google Play Games.");
-            return;
-        }
-
-        if (!File.Exists(stockBios))
-        {
-            Console.WriteLine("\n\n############# Backup bios.rom");
-            File.Copy(bios, stockBios);
-        }
-
-        Console.WriteLine("\n\n############# Patch bios.rom");
-        PatchBios(bios);
-
-        if (!File.Exists(stockServiceConfig))
-        {
-            Console.WriteLine("\n\n############# Backup Service.exe.config");
-            File.Copy(serviceConfig, stockServiceConfig);
-        }
-        Console.WriteLine("\n\n############# Patch Service.exe.config");
-        PatchKernelCmdline(serviceConfig);
-
-        if (!File.Exists(stockServiceExe))
-        {
-            Console.WriteLine("\n\n############# Backup Service.exe");
-            File.Copy(serviceExe, stockServiceExe);
-        }
-        Console.WriteLine("\n\n############# Patch Service.exe");
-        PatchServiceExe(stockServiceExe, serviceExe);
-
-        if (!File.Exists(stockBootImg))
-            File.WriteAllBytes(stockBootImg, ExtractBoot(aggregateImg));
-
-        Console.WriteLine("\n\n############# Patch boot.img");
-        BootPatch(arg.Magisk, stockBootImg);
-
-        Console.WriteLine("\n\n############# Flash patched boot img");
-        FlashBoot(aggregateImg, "new-boot.img");
-
-        Console.WriteLine("\n\n############# Cleanup");
-        Environment.CurrentDirectory = StartDirectory;
-        Directory.Delete(TempDirName, true);
-    }
-
-    static void PatchServiceExe(string exePath, string outPath)
-    {
-        Environment.CurrentDirectory = Path.GetDirectoryName(exePath)!;
-        try
-        {
-
-            var assembly = AssemblyDefinition.ReadAssembly(exePath, new ReaderParameters { AssemblyResolver = new DefaultAssemblyResolver() });
-            var module = assembly.MainModule;
-
-            // System.Void Google.Hpe.Service.AppSession.AppSessionScope::HandleEmulatorSurfaceStateUpdate(Google.Hpe.Service.Emulator.Surface.EmulatorSurfaceState,Google.Hpe.Service.Emulator.Surface.EmulatorSurfaceState)
-            var AppSessionScope = module.GetType("Google.Hpe.Service.AppSession.AppSessionScope");
-            var method = AppSessionScope.Methods.Single(x => x.Name == "HandleEmulatorSurfaceStateUpdate");
-            var instructions = method.Body.Instructions;
-
-            var begin = instructions.FirstOrDefault(p => p.Operand is FieldDefinition f && f.Name == "_transientForegroundPackages");
-
-            if (begin == null)
-            {
-                Console.WriteLine("nothing to patch.");
-                return;
-            }
-
-            var idx = instructions.IndexOf(begin);
-            Console.WriteLine($"Patch Instruction at idx {idx}, offset IL_{begin.Offset:X4}");
-
-            while (instructions[idx].OpCode != OpCodes.Leave_S)
-            {
-                instructions.RemoveAt(idx);
-            }
-
-            assembly.Write(outPath);
-        }
-        finally
-        {
-            Environment.CurrentDirectory = StartDirectory;
-        }
-    }
-
-    static byte[] ExtractBoot(string diskPath)
-    {
-        const int LBS = 512; // Logical block size
-        var gpt = ReadGpt().Primary().FromPath(diskPath);
-        var part = gpt.Partitions.Single(x => x.Name == "boot_a");
-        var offset = part.FirstLba * LBS;
-        var size = (part.LastLba - part.FirstLba + 1) * LBS;
-
-        var data = new byte[size];
-        using var fs = File.OpenRead(diskPath);
-
-        fs.Seek((long)offset, SeekOrigin.Begin);
-        fs.ReadExactly(data);
-        return data;
-    }
-
-    static void FlashBoot(string diskPath, string imgPath)
-    {
-        var gpt = ReadGpt().Primary().FromPath(diskPath);
-        var offset = gpt.Partitions.Single(x => x.Name == "boot_a").FirstLba * 512;
-
-        Console.WriteLine($"boot_a at {offset:X8}");
-
-        using var fs = File.OpenWrite(diskPath);
-        using var s = File.OpenRead(imgPath);
-        fs.Seek((long)offset, SeekOrigin.Begin);
-        s.CopyTo(fs);
-    }
-
-
-    static void ExtractResource(string key, string path)
-    {
-#if DEBUG
-        File.Copy("..\\" + key, path);
-#else
-		var assembly = System.Reflection.Assembly.GetExecutingAssembly();
-		using var stream = assembly
-		  .GetManifestResourceStream($"{nameof(hpesuperpower)}.Resources.{key}")!;
-		using var fs = File.OpenWrite(path);
-		stream.CopyTo(fs);
-#endif
-    }
-
-    const string TempDirName = "hpesuperpower_temp";
-    static void BootPatch(string magiskApk, string boot_img)
-    {
-        /*
-        ensure empty temp directory, 
-        cd .\patch, 
-        extract magiskboot.exe,
-        copy boot_img,
-        patch boot_img as new-boot.img
-        */
-
-        try
-        {
-            Directory.Delete(TempDirName, true);
-        }
-        catch { }
-
-        var dir = Directory.CreateDirectory(TempDirName);
-
-        Environment.CurrentDirectory = dir.FullName;
-        File.Copy(boot_img, "boot.img");
-        ExtractResource("magiskboot.exe", "magiskboot.exe");
-
-        // remove no_install_unknown_sources_globally restriction
-        ExtractResource("superpower.apk", "superpower.apk");
-        ExtractResource("custom.rc", "custom.rc");
-
-        using var magisk = File.OpenRead(magiskApk);
-        var zip = new ZipArchive(magisk);
-        zip.GetEntry("lib/x86_64/libmagisk.so")!.ExtractToFile("magisk");
-        zip.GetEntry("assets/stub.apk")!.ExtractToFile("stub.apk");
-        zip.GetEntry("lib/x86_64/libinit-ld.so")!.ExtractToFile("init-ld");
-        zip.GetEntry("lib/x86_64/libmagiskinit.so")!.ExtractToFile("magiskinit");
-
-        Run($"magiskboot.exe unpack boot.img").Z();
-        string sha1;
-        var status = Run("magiskboot.exe cpio ramdisk.cpio test");
-        switch (status & 3)
-        {
-            case 0:
-                Console.WriteLine("- Stock boot image detected");
-                var sha1b = SHA1.HashData(File.ReadAllBytes(boot_img));
-                sha1 = Convert.ToHexString(sha1b).ToLowerInvariant();
-                break;
-            case 1:
-                Console.WriteLine("- Magisk patched boot image detected");
-                Run("magiskboot.exe",
-"""
-cpio ramdisk.cpio 
-"extract .backup/.magisk config.orig" 
-"restore"
-""".NoEOL()).Z();
-                sha1 = File.ReadAllLines("config.orig").Single(x => x.StartsWith("SHA1=")).Substring("SHA1=".Length);
-                break;
-            default: // case 2
-                Console.WriteLine("! Boot image patched by unsupported programs");
-                return;
-        }
-
-
-        File.Copy("ramdisk.cpio", "ramdisk.cpio.orig");
-
-        Run("magiskboot.exe compress=xz magisk magisk.xz").Z();
-        Run("magiskboot.exe compress=xz stub.apk stub.xz").Z();
-        Run("magiskboot.exe compress=xz init-ld init-ld.xz").Z();
-
-        var config = new Dictionary<string, string>(){
-{"KEEPVERITY","true"},
-{"KEEPFORCEENCRYPT","true"},
-{"RECOVERYMODE","false"},
-{"PREINITDEVICE","metadata"},
-{"SHA1",sha1},
+var rootCmd = new RootCommand(head)
+{
+	Name = prog,
 };
 
-        File.WriteAllText("config", string.Join("\n", config.Select(p => $"{p.Key}={p.Value}")));
-        var steps = """
-cpio ramdisk.cpio 
-"add 0750 init magiskinit" 
-"mkdir 0750 overlay.d" 
-"mkdir 0750 overlay.d/sbin" 
-"add 0644 overlay.d/sbin/magisk.xz magisk.xz" 
-"add 0644 overlay.d/sbin/stub.xz stub.xz" 
-"add 0644 overlay.d/sbin/init-ld.xz init-ld.xz" 
-"patch" 
-"backup ramdisk.cpio.orig" 
-"mkdir 000 .backup" 
-"add 000 .backup/.magisk config" 
-"add 0644 overlay.d/custom.rc custom.rc" 
-"add 0755 overlay.d/sbin/superpower.apk superpower.apk" 
-""".NoEOL();
+// --dev
+var variantOption = new Option<bool>("--dev", "(Global option) Apply to Google Play Games Emulator for Developers");
+rootCmd.AddGlobalOption(variantOption);
 
-        Run("magiskboot.exe", steps, config).Z();
-        Run("magiskboot.exe repack boot.img").Z();
-    }
+// Auto Patch (Unlock+Extract+Patch+Flash)
+var magiskArgument = new Argument<FileInfo>("apkfile", "Magisk APK file path");
+var magiskCmd = new Command("magisk", "Root your Google Play Games with single command. Tested on Magisk v28.0, v28.1")
+{
+	magiskArgument
+};
 
-    static void PatchKernelCmdline(string serviceConfigPath)
-    {
-        // bypass kernel-space AVB.
+rootCmd.AddCommand(magiskCmd);
 
-        const string to = "androidboot.verifiedbootstate=orange ";
-        var xml = new XmlDocument();
-        xml.Load(serviceConfigPath);
-        var value = xml.SelectNodes("/configuration/applicationSettings/Google.Hpe.Service.Properties.EmulatorSettings/setting[@name='EmulatorGuestParameters']/value")!.Item(0)!;
+// Unlock
+var unlockCmd = new Command("unlock", "Unlock bootloader");
+rootCmd.AddCommand(unlockCmd);
 
-        var oldParam = value.InnerText;
-        if (oldParam.Contains(to))
-        {
-            Console.WriteLine("Service.exe.config already modified, nothing to do.");
-            return;
-        }
-        value.InnerText = to + value.InnerText;
-        xml.Save(serviceConfigPath);
-        Console.WriteLine("Service.exe.config modified.");
-    }
+// List
+var humanOption = new Option<bool>("-h", "Human readable");
+var listCommand = new Command("ls", "List partitions in aggregate.img"){
+	humanOption
+};
+rootCmd.AddCommand(listCommand);
 
-    static void PatchBios(string path)
-    {
-        // disable secure boot
+var partitionNameArg = new Argument<string>("partname", "Partition name");
+var partitionFileArg = new Argument<FileInfo>("file", "Path to the partition image file");
+// Extract
+var extractCmd = new Command("extract", "Extract partition from aggregate.img") {
+	partitionNameArg,
+	partitionFileArg
+};
+rootCmd.AddCommand(extractCmd);
 
-        var from = " verified_boot_android"u8;
-        var to = "          boot_android"u8;
+// Flash
+var superpowerOption = new Option<bool>("--superpower", "Patch magisk patched boot image again to remove install restriction");
+var flashCmd = new Command("flash", "Flash partition to aggregate.img") {
+	partitionNameArg,
+	partitionFileArg,
+	superpowerOption
+};
+rootCmd.AddCommand(flashCmd);
+var flashExample = @$"
+Example:
+  {prog} flash boot_a magisk_patched.img --superpower
+  {prog} flash boot_a boot_a.img.bak".Trim();
 
-        var bios = File.ReadAllBytes(path);
+// Restore
+var restoreCmd = new Command("restore", "Undo all changes made by this tool");
+rootCmd.AddCommand(restoreCmd);
 
-        var off = bios.AsSpan().IndexOf(from);
-        if (off == -1)
-        {
-            Console.WriteLine("hex not found, the bios might already been patched, nothing to do.");
-            return;
-        }
-        Console.WriteLine($"bios patched at {off:X8}");
-        to.CopyTo(bios.AsSpan(off));
+var parser = new CommandLineBuilder(rootCmd)
+		.UseEnvironmentVariableDirective()
+		.UseParseDirective()
+		.UseTypoCorrections()
+		.UseParseErrorReporting()
+		.UseExceptionHandler()
+		.CancelOnProcessTermination()
+		.UseHelp(ctx =>
+		{
+			if (ctx.Command == flashCmd)
+			{
+				ctx.HelpBuilder.CustomizeLayout(_ =>
+					HelpBuilder.Default
+					.GetLayout()
+					.Append(_ => _.Output.WriteLine(flashExample))
+				);
+			}
+		})
+		.Build();
 
-        File.WriteAllBytes(path, bios);
-    }
-}
+magiskCmd.SetHandler((dev, magisk) =>
+{
+	var m = new HPEInstallation(dev);
+	if (!m.Check(write: true)) return;
+	m.Unlock();
+	m.Patch(magisk);
+}, variantOption, magiskArgument);
+
+unlockCmd.SetHandler((dev, magisk) =>
+{
+	var m = new HPEInstallation(dev);
+	if (!m.Check(write: true)) return;
+	m.Unlock();
+}, variantOption, magiskArgument);
+
+listCommand.SetHandler((dev, human) =>
+{
+	var m = new HPEInstallation(dev);
+	if (!m.Check(write: false)) return;
+	PartitionCommand.List(m.aggregateImg, human);
+}, variantOption, humanOption);
+
+extractCmd.SetHandler((dev, partname, outfile) =>
+{
+	var m = new HPEInstallation(dev);
+	if (!m.Check(write: false)) return;
+	PartitionCommand.Extract(m.aggregateImg, partname, outfile);
+}, variantOption, partitionNameArg, partitionFileArg);
+
+flashCmd.SetHandler((dev, partname, infile, superpower) =>
+{
+	var m = new HPEInstallation(dev);
+	if (!m.Check(write: true)) return;
+	m.FlashCommand(partname, infile, superpower);
+}, variantOption, partitionNameArg, partitionFileArg, superpowerOption);
+
+restoreCmd.SetHandler((dev) =>
+{
+	var m = new HPEInstallation(dev);
+	if (!m.Check(write: true)) return;
+	m.Restore();
+}, variantOption);
+
+parser.Invoke(args);
