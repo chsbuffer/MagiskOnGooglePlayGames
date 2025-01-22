@@ -168,6 +168,8 @@ sealed class HPEInstallation
 		File.Copy(stockBios, bios, true);
 		Console.WriteLine("\n\n############# Restore Service.exe");
 		File.Copy(stockServiceExe, serviceExe, true);
+		Console.WriteLine("\n\n############# Restore Service.exe");
+		File.Copy(stockServiceLib, serviceLib, true);
 		Console.WriteLine("\n\n############# Restore Service.exe.config");
 		File.Copy(stockServiceConfig, serviceConfig, true);
 
