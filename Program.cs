@@ -104,14 +104,14 @@ listCommand.SetHandler((dev, human) =>
 {
 	var m = new HPEInstallation(dev);
 	if (!m.Check(write: false)) return;
-	PartitionCommand.List(m.aggregateImg, human);
+	PartitionCommand.List(m.AggregateImg, human);
 }, variantOption, humanOption);
 
 extractCmd.SetHandler((dev, partname, outfile) =>
 {
 	var m = new HPEInstallation(dev);
 	if (!m.Check(write: false)) return;
-	PartitionCommand.Extract(m.aggregateImg, partname, outfile);
+	PartitionCommand.Extract(m.AggregateImg, partname, outfile);
 }, variantOption, partitionNameArg, partitionFileArg);
 
 flashCmd.SetHandler((dev, partname, infile, superpower) =>

@@ -55,6 +55,8 @@ static class UnlockCommand
 
 	public static void PatchServiceExe(string exePath, string outPath)
 	{
+		// remove foreground white-list
+
 		using var popCwd = new Pushd(Path.GetDirectoryName(exePath)!);
 
 		var assembly = AssemblyDefinition.ReadAssembly(exePath, new ReaderParameters { AssemblyResolver = new DefaultAssemblyResolver() });
@@ -83,6 +85,5 @@ static class UnlockCommand
 		}
 
 		assembly.Write(outPath);
-
 	}
 }

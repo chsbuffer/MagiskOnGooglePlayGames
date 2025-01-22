@@ -3,45 +3,116 @@ using System.Security.Principal;
 
 namespace hpesuperpower;
 
+interface IBackup
+{
+	void Backup();
+	void Restore();
+}
+
+class BackupFile(string installPath, string relativePath, string? name = null) : IBackup
+{
+	private readonly string Name = name ?? relativePath;
+	public readonly string SourcePath = Path.Combine(installPath, relativePath);
+	public readonly string BackupPath = Path.Combine(installPath, relativePath + ".bak");
+	public bool Exists()
+	{
+		return File.Exists(SourcePath);
+	}
+	public bool BackupExists()
+	{
+		return File.Exists(BackupPath);
+	}
+
+	public void Backup()
+	{
+		if (!Exists())
+		{
+			Console.WriteLine($"Warning: {Name} not found, skipped.");
+			return;
+		}
+
+		if (BackupExists())
+		{
+			return;
+		}
+
+		Console.WriteLine($"\n\n############# Backup {Name}");
+		File.Copy(SourcePath, BackupPath, true);
+	}
+
+	public void Restore()
+	{
+		if (BackupExists())
+		{
+			Console.WriteLine($"\n\n############# Restore {Name}");
+			File.Copy(BackupPath, SourcePath, true);
+		}
+		else
+		{
+			Console.WriteLine($"Warning: {Name} not found, skipped.");
+		}
+	}
+}
+
+class PartitionFile(string installPath) : IBackup
+{
+	public readonly string PartName = "boot_a";
+	public readonly string AggregateImgPath = Path.Combine(installPath, @"emulator\avd\aggregate.img");
+	public readonly string ExtractPartitionPath = Path.Combine(installPath, @"emulator\avd\boot_a.img");
+
+	public void Backup()
+	{
+		if (File.Exists(ExtractPartitionPath))
+		{
+			return;
+		}
+
+		Console.WriteLine("\n\n############# Extract boot.img");
+		PartitionCommand.Extract(AggregateImgPath, PartName, new FileInfo(ExtractPartitionPath));
+	}
+
+	public void Restore()
+	{
+		if (!File.Exists(ExtractPartitionPath))
+		{
+			Console.WriteLine("Warning: stock boot image not found, skipped.");
+			return;
+		}
+
+		Console.WriteLine("\n\n############# Restore stock boot");
+		PartitionCommand.Flash(AggregateImgPath, PartName, new FileInfo(ExtractPartitionPath));
+	}
+}
+
 sealed class HPEInstallation
 {
+	private readonly BackupFile bios;
+	private readonly BackupFile serviceExe;
+	private readonly BackupFile serviceLib;
+	private readonly BackupFile serviceConfig;
+	private readonly PartitionFile bootImg;
+
 	public const string StablePath = @"C:\Program Files\Google\Play Games\current";
 	public const string DevPath = @"C:\Program Files\Google\Play Games Developer Emulator\current";
 
 	public readonly bool Dev;
-	public readonly string installPath;
+	public readonly string InstallPath;
 
-	public readonly string bios;
-	public readonly string serviceExe;
-	public readonly string serviceLib;
-	public readonly string serviceConfig;
-	public readonly string aggregateImg;
-
-	public readonly string stockBios;
-	public readonly string stockServiceExe;
-	public readonly string stockServiceLib;
-	public readonly string stockServiceConfig;
-	public readonly string stockBootImg;
+	public string AggregateImg => bootImg.AggregateImgPath;
 
 	public HPEInstallation(bool dev)
 	{
 		Dev = dev;
-		installPath = dev ? DevPath : StablePath;
+		InstallPath = dev ? DevPath : StablePath;
 
-		bios = Path.Combine(installPath, @"emulator\avd\bios.rom");
-		serviceExe = Path.Combine(installPath, @"service\Service.exe");
-		serviceLib = Path.Combine(installPath, @"service\ServiceLib.dll");
-		serviceConfig = Path.Combine(installPath, @"service\Service.exe.config");
-		aggregateImg = Path.Combine(installPath, @"emulator\avd\aggregate.img");
-
-		stockBios = Path.Combine(installPath, @"emulator\avd\bios.rom.bak");
-		stockServiceExe = Path.Combine(installPath, @"service\Service.exe.bak");
-		stockServiceLib = Path.Combine(installPath, @"service\ServiceLib.dll.bak");
-		stockServiceConfig = Path.Combine(installPath, @"service\Service.exe.config.bak");
-		stockBootImg = Path.Combine(installPath, @"emulator\avd\boot_a.img");
+		bios = new(InstallPath, @"emulator\avd\bios.rom");
+		serviceExe = new(InstallPath, @"service\Service.exe");
+		serviceLib = new(InstallPath, @"service\ServiceLib.dll");
+		serviceConfig = new(InstallPath, @"service\Service.exe.config");
+		bootImg = new(InstallPath);
 	}
 
-	static bool CanWrite()
+	private static bool IsElevated()
 	{
 		bool isElevated;
 		using (var identity = WindowsIdentity.GetCurrent())
@@ -55,20 +126,20 @@ sealed class HPEInstallation
 
 	public bool Check(bool write)
 	{
-		if (!Directory.Exists(installPath))
+		if (!Directory.Exists(InstallPath))
 		{
 			Console.WriteLine(
 				"Google Play Games have not installed. Get it at https://play.google.com/googleplaygames or https://developer.android.com/games/playgames/emulator");
 			return false;
 		}
 
-		if (write && Process.GetProcesses().Any(p => p.GetFileNameOrDefault() == serviceExe))
+		if (write && Process.GetProcesses().Any(p => p.GetFileNameOrDefault() == serviceExe.SourcePath))
 		{
 			Console.WriteLine($"Please quit Google Play Games.");
 			return false;
 		}
 
-		if (write && !CanWrite())
+		if (write && !IsElevated())
 		{
 			Console.WriteLine("Please run this program from Elevated Command Prompt");
 			return false;
@@ -79,65 +150,40 @@ sealed class HPEInstallation
 
 	public void Unlock()
 	{
-		if (!File.Exists(stockBios))
-		{
-			Console.WriteLine("\n\n############# Backup bios.rom");
-			File.Copy(bios, stockBios);
-		}
-
+		bios.Backup();
 		Console.WriteLine("\n\n############# Patch bios.rom");
-		UnlockCommand.PatchBios(bios);
+		UnlockCommand.PatchBios(bios.SourcePath);
 
-		if (!File.Exists(stockServiceConfig))
-		{
-			Console.WriteLine("\n\n############# Backup Service.exe.config");
-			File.Copy(serviceConfig, stockServiceConfig);
-		}
-
+		serviceExe.Backup();
 		Console.WriteLine("\n\n############# Patch Service.exe.config");
-		UnlockCommand.PatchKernelCmdline(serviceConfig);
+		UnlockCommand.PatchKernelCmdline(serviceConfig.SourcePath);
 
-		if (!File.Exists(stockServiceExe))
-		{
-			Console.WriteLine("\n\n############# Backup Service.exe");
-			File.Copy(serviceExe, stockServiceExe);
-		}
-
-		if (!File.Exists(stockServiceLib))
-		{
-			Console.WriteLine("\n\n############# Backup ServiceLib.dll");
-			File.Copy(serviceLib, stockServiceLib);
-		}
+		serviceLib.Backup();
 
 		if (!Dev)
 		{
-			if (File.Exists(serviceLib))
+			if (serviceLib.Exists())
 			{
 				Console.WriteLine("\n\n############# Patch ServiceLib.dll");
-				UnlockCommand.PatchServiceExe(stockServiceLib, serviceLib);
+				UnlockCommand.PatchServiceExe(serviceLib.BackupPath, serviceLib.SourcePath);
 			}
 			else
 			{
 				Console.WriteLine("\n\n############# Patch Service.exe");
-				UnlockCommand.PatchServiceExe(stockServiceExe, serviceExe);
+				UnlockCommand.PatchServiceExe(serviceExe.BackupPath, serviceExe.SourcePath);
 			}
 		}
 	}
 
 	public void Patch(FileInfo magiskApk)
 	{
-		var stockBoot = new FileInfo(stockBootImg);
-		if (!stockBoot.Exists)
-		{
-			Console.WriteLine("\n\n############# Extract boot.img");
-			PartitionCommand.Extract(aggregateImg, "boot_a", stockBoot);
-		}
+		bootImg.Backup();
 
 		Console.WriteLine("\n\n############# Patch boot.img");
-		var newBoot = BootPatchCommand.BootPatch(magiskApk, stockBoot);
+		var newBoot = BootPatchCommand.BootPatch(magiskApk, new FileInfo(bootImg.ExtractPartitionPath));
 
 		Console.WriteLine("\n\n############# Flash patched boot img");
-		PartitionCommand.Flash(aggregateImg, "boot_a", newBoot);
+		PartitionCommand.Flash(bootImg.AggregateImgPath, "boot_a", newBoot);
 
 		Console.WriteLine("\n\n############# Cleanup");
 		BootPatchCommand.Cleanup();
@@ -150,7 +196,7 @@ sealed class HPEInstallation
 		if (patch)
 			infile = BootPatchCommand.SuperpowerPatch(infile);
 
-		PartitionCommand.Flash(aggregateImg, partname, infile);
+		PartitionCommand.Flash(bootImg.AggregateImgPath, partname, infile);
 
 		if (patch)
 			BootPatchCommand.Cleanup();
@@ -158,29 +204,17 @@ sealed class HPEInstallation
 
 	public void Restore()
 	{
-		if (!File.Exists(stockBios))
+		if (!bios.BackupExists())
 		{
 			Console.WriteLine("No backup founded.");
 			return;
 		}
 
-		Console.WriteLine("\n\n############# Restore bios.rom");
-		File.Copy(stockBios, bios, true);
-		Console.WriteLine("\n\n############# Restore Service.exe");
-		File.Copy(stockServiceExe, serviceExe, true);
-		Console.WriteLine("\n\n############# Restore Service.exe");
-		File.Copy(stockServiceLib, serviceLib, true);
-		Console.WriteLine("\n\n############# Restore Service.exe.config");
-		File.Copy(stockServiceConfig, serviceConfig, true);
+		bios.Restore();
+		serviceExe.Restore();
+		serviceLib.Restore();
+		serviceConfig.Restore();
 
-		if (File.Exists(stockBootImg))
-		{
-			Console.WriteLine("\n\n############# Restore stock boot");
-			PartitionCommand.Flash(aggregateImg, "boot_a", new FileInfo(stockBootImg));
-		}
-		else
-		{
-			Console.WriteLine("Warning: stock boot image not found, skipped.");
-		}
+		bootImg.Restore();
 	}
 }
