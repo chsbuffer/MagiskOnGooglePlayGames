@@ -25,26 +25,26 @@ class BackupFile(string installPath, string relativePath, string? name = null) :
 
 	public void Backup()
 	{
-		if (!Exists())
-		{
-			Console.WriteLine($"Warning: {Name} not found, skipped.");
-			return;
-		}
-
 		if (BackupExists())
 		{
 			return;
 		}
 
 		Console.WriteLine($"\n\n############# Backup {Name}");
+		if (!Exists())
+		{
+			Console.WriteLine($"Warning: {Name} not found, skipped.");
+			return;
+		}
+
 		File.Copy(SourcePath, BackupPath, true);
 	}
 
 	public void Restore()
 	{
+		Console.WriteLine($"\n\n############# Restore {Name}");
 		if (BackupExists())
 		{
-			Console.WriteLine($"\n\n############# Restore {Name}");
 			File.Copy(BackupPath, SourcePath, true);
 		}
 		else
@@ -67,19 +67,19 @@ class PartitionFile(string installPath) : IBackup
 			return;
 		}
 
-		Console.WriteLine("\n\n############# Extract boot.img");
+		Console.WriteLine("\n\n############# Extract boot_a.img");
 		PartitionCommand.Extract(AggregateImgPath, PartName, new FileInfo(ExtractPartitionPath));
 	}
 
 	public void Restore()
 	{
+		Console.WriteLine("\n\n############# Restore stock boot");
 		if (!File.Exists(ExtractPartitionPath))
 		{
 			Console.WriteLine("Warning: stock boot image not found, skipped.");
 			return;
 		}
 
-		Console.WriteLine("\n\n############# Restore stock boot");
 		PartitionCommand.Flash(AggregateImgPath, PartName, new FileInfo(ExtractPartitionPath));
 	}
 }
