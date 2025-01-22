@@ -1,0 +1,6 @@
+id=hpesuperpower
+name=HPE Superpower
+version=1.0.0
+versionCode=1
+author=ChsBuffer
+description=remove no_install_unknown_sources_globally restriction
