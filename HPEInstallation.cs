@@ -13,11 +13,13 @@ sealed class HPEInstallation
 
 	public readonly string bios;
 	public readonly string serviceExe;
+	public readonly string serviceLib;
 	public readonly string serviceConfig;
 	public readonly string aggregateImg;
 
 	public readonly string stockBios;
 	public readonly string stockServiceExe;
+	public readonly string stockServiceLib;
 	public readonly string stockServiceConfig;
 	public readonly string stockBootImg;
 
@@ -28,11 +30,13 @@ sealed class HPEInstallation
 
 		bios = Path.Combine(installPath, @"emulator\avd\bios.rom");
 		serviceExe = Path.Combine(installPath, @"service\Service.exe");
+		serviceLib = Path.Combine(installPath, @"service\ServiceLib.dll");
 		serviceConfig = Path.Combine(installPath, @"service\Service.exe.config");
 		aggregateImg = Path.Combine(installPath, @"emulator\avd\aggregate.img");
 
 		stockBios = Path.Combine(installPath, @"emulator\avd\bios.rom.bak");
 		stockServiceExe = Path.Combine(installPath, @"service\Service.exe.bak");
+		stockServiceLib = Path.Combine(installPath, @"service\ServiceLib.dll.bak");
 		stockServiceConfig = Path.Combine(installPath, @"service\Service.exe.config.bak");
 		stockBootImg = Path.Combine(installPath, @"emulator\avd\boot_a.img");
 	}
@@ -53,7 +57,8 @@ sealed class HPEInstallation
 	{
 		if (!Directory.Exists(installPath))
 		{
-			Console.WriteLine("Google Play Games have not installed. Get it at https://play.google.com/googleplaygames or https://developer.android.com/games/playgames/emulator");
+			Console.WriteLine(
+				"Google Play Games have not installed. Get it at https://play.google.com/googleplaygames or https://developer.android.com/games/playgames/emulator");
 			return false;
 		}
 
@@ -88,6 +93,7 @@ sealed class HPEInstallation
 			Console.WriteLine("\n\n############# Backup Service.exe.config");
 			File.Copy(serviceConfig, stockServiceConfig);
 		}
+
 		Console.WriteLine("\n\n############# Patch Service.exe.config");
 		UnlockCommand.PatchKernelCmdline(serviceConfig);
 
@@ -97,10 +103,24 @@ sealed class HPEInstallation
 			File.Copy(serviceExe, stockServiceExe);
 		}
 
+		if (!File.Exists(stockServiceLib))
+		{
+			Console.WriteLine("\n\n############# Backup ServiceLib.dll");
+			File.Copy(serviceLib, stockServiceLib);
+		}
+
 		if (!Dev)
 		{
-			Console.WriteLine("\n\n############# Patch Service.exe");
-			UnlockCommand.PatchServiceExe(stockServiceExe, serviceExe);
+			if (File.Exists(serviceLib))
+			{
+				Console.WriteLine("\n\n############# Patch ServiceLib.dll");
+				UnlockCommand.PatchServiceExe(stockServiceLib, serviceLib);
+			}
+			else
+			{
+				Console.WriteLine("\n\n############# Patch Service.exe");
+				UnlockCommand.PatchServiceExe(stockServiceExe, serviceExe);
+			}
 		}
 	}
 
@@ -161,5 +181,4 @@ sealed class HPEInstallation
 			Console.WriteLine("Warning: stock boot image not found, skipped.");
 		}
 	}
-
 }

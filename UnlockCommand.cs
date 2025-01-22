@@ -72,6 +72,7 @@ static class UnlockCommand
 			Console.WriteLine("nothing to patch.");
 			return;
 		}
+		Console.WriteLine($"Version: {assembly.Name.FullName}");
 
 		var idx = instructions.IndexOf(begin);
 		Console.WriteLine($"Patch Instruction at idx {idx}, offset IL_{begin.Offset:X4}");
