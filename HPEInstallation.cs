@@ -14,10 +14,12 @@ class BackupFile(string installPath, string relativePath, string? name = null) :
 	private readonly string Name = name ?? relativePath;
 	public readonly string SourcePath = Path.Combine(installPath, relativePath);
 	public readonly string BackupPath = Path.Combine(installPath, relativePath + ".bak");
+
 	public bool Exists()
 	{
 		return File.Exists(SourcePath);
 	}
+
 	public bool BackupExists()
 	{
 		return File.Exists(BackupPath);
@@ -43,14 +45,13 @@ class BackupFile(string installPath, string relativePath, string? name = null) :
 	public void Restore()
 	{
 		Console.WriteLine($"\n\n############# Restore {Name}");
-		if (BackupExists())
-		{
-			File.Copy(BackupPath, SourcePath, true);
-		}
-		else
+		if (!BackupExists())
 		{
 			Console.WriteLine($"Warning: {Name} not found, skipped.");
+			return;
 		}
+
+		File.Copy(BackupPath, SourcePath, true);
 	}
 }
 
@@ -154,24 +155,21 @@ sealed class HPEInstallation
 		Console.WriteLine("\n\n############# Patch bios.rom");
 		UnlockCommand.PatchBios(bios.SourcePath);
 
-		serviceExe.Backup();
+		serviceConfig.Backup();
 		Console.WriteLine("\n\n############# Patch Service.exe.config");
 		UnlockCommand.PatchKernelCmdline(serviceConfig.SourcePath);
 
-		serviceLib.Backup();
-
-		if (!Dev)
+		if (serviceLib.Exists())
 		{
-			if (serviceLib.Exists())
-			{
-				Console.WriteLine("\n\n############# Patch ServiceLib.dll");
-				UnlockCommand.PatchServiceExe(serviceLib.BackupPath, serviceLib.SourcePath);
-			}
-			else
-			{
-				Console.WriteLine("\n\n############# Patch Service.exe");
-				UnlockCommand.PatchServiceExe(serviceExe.BackupPath, serviceExe.SourcePath);
-			}
+			serviceLib.Backup();
+			Console.WriteLine("\n\n############# Patch ServiceLib.dll");
+			UnlockCommand.PatchServiceExe(serviceLib.BackupPath, serviceLib.SourcePath, Dev);
+		}
+		else
+		{
+			serviceExe.Backup();
+			Console.WriteLine("\n\n############# Patch Service.exe");
+			UnlockCommand.PatchServiceExe(serviceExe.BackupPath, serviceExe.SourcePath, Dev);
 		}
 	}
 
