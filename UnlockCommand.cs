@@ -114,7 +114,13 @@ static class UnlockCommand
 				: "Google.Hpe.Service.KiwiEmulator.EmulatorFeaturePolicyProd";
 
 			var clazz = module.GetType(className);
-			var field = clazz.Fields.Single(it => it.Name.Contains("IsHoudiniEnabled"));
+			var field = clazz.Fields.SingleOrDefault(it => it.Name.Contains("IsHoudiniEnabled"));
+			if (field == null)
+			{
+				Console.WriteLine("nothing to patch.");
+				return;
+			}
+
 			foreach (var ctor in clazz.Methods.Where(it => it.IsConstructor && !it.IsStatic))
 			{
 				var proc = ctor.Body.GetILProcessor();
@@ -124,7 +130,6 @@ static class UnlockCommand
 				proc.InsertBefore(ret, proc.Create(OpCodes.Stfld, field));
 			}
 		}
-
 
 		#endregion Houdini
 
