@@ -1,10 +1,16 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 
 namespace DiskPartitionInfo.Extensions
 {
     internal static class ByteArrayExtensions
     {
-        internal static T ToStruct<T>(this byte[] bytes)
+        internal static T ToStruct<
+	        [DynamicallyAccessedMembers(
+		        DynamicallyAccessedMemberTypes.PublicConstructors | 
+		        DynamicallyAccessedMemberTypes.NonPublicConstructors
+	        )]
+	        T>(this byte[] bytes)
             where T : struct
         {
             T result;

@@ -9,7 +9,7 @@ interface IBackup
 	void Restore();
 }
 
-class BackupFile(string installPath, string relativePath, string? name = null) : IBackup
+sealed class BackupFile(string installPath, string relativePath, string? name = null) : IBackup
 {
 	private readonly string Name = name ?? relativePath;
 	public readonly string SourcePath = Path.Combine(installPath, relativePath);
@@ -55,7 +55,7 @@ class BackupFile(string installPath, string relativePath, string? name = null) :
 	}
 }
 
-class PartitionFile(string installPath) : IBackup
+sealed class PartitionFile(string installPath) : IBackup
 {
 	public readonly string PartName = "boot_a";
 	public readonly string AggregateImgPath = Path.Combine(installPath, @"emulator\avd\aggregate.img");
